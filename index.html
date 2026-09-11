@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>东方财富浏览器直连 / CORS 测试</title>
+<style>
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;background:#f6f8fb;color:#172033;margin:0;padding:16px}
+.card{background:#fff;border-radius:14px;padding:14px;margin:12px 0;box-shadow:0 2px 12px #0000000d}
+button{border:0;background:#0b57d0;color:white;border-radius:10px;padding:11px 14px;font-weight:600;margin:5px 5px 5px 0}
+pre{white-space:pre-wrap;word-break:break-all;background:#f4f6f8;padding:10px;border-radius:9px;min-height:60px}
+.ok{color:#087443}.bad{color:#b42318}.warn{color:#a15c00}
+.small{font-size:13px;color:#667085}
+</style>
+</head>
+<body>
+<h2>东方财富浏览器直连测试</h2>
+<p class="small">目标：测试普通 PWA/网页能否直接从浏览器读取中证1000（000852）历史日K，不经过代理。</p>
+
+<div class="card">
+<h3>测试1：标准 fetch + CORS</h3>
+<button onclick="testFetch()">执行 fetch 测试</button>
+<pre id="fetchOut">尚未执行</pre>
+</div>
+
+<div class="card">
+<h3>测试2：JSONP / script 标签</h3>
+<p class="small">如果普通 fetch 被 CORS 拦截，但接口支持 JSONP，则仍可能直接从浏览器取数。</p>
+<button onclick="testJsonp()">执行 JSONP 测试</button>
+<pre id="jsonpOut">尚未执行</pre>
+</div>
+
+<div class="card">
+<h3>判定说明</h3>
+<ul>
+<li><b>fetch成功：</b>可直接使用浏览器 fetch，最简单。</li>
+<li><b>fetch失败但JSONP成功：</b>可考虑浏览器端 JSONP，但稳定性/安全治理弱于同源静态JSON。</li>
+<li><b>两者都失败：</b>维持 GitHub Actions 自动更新静态JSON方案。</li>
+</ul>
+<p class="warn">最好把本测试页部署到与你的 PWA 相同的 GitHub Pages HTTPS 域名后再测试；不要只用 file:// 双击本地HTML作为最终结论。</p>
+</div>
+
+<script>
+const base = 'https://push2his.eastmoney.com/api/qt/stock/kline/get';
+function params(extra=''){
+  return `?secid=1.000852&fields1=f1,f2,f3&fields2=f51,f52,f53,f54,f55,f56,f57&klt=101&fqt=0&end=20500101&lmt=5&ut=fa5fd1943c7b386f172d6893dbbd1d0c${extra}`;
+}
+async function testFetch(){
+  const out=document.getElementById('fetchOut');
+  out.textContent='正在请求...';
+  try{
+    const r=await fetch(base+params(),{
+      method:'GET',
+      mode:'cors',
+      credentials:'omit',
+      cache:'no-store'
+    });
+    const text=await r.text();
+    out.innerHTML=`<span class="ok">✅ fetch 成功</span>\nHTTP ${r.status}\ncontent-type: ${r.headers.get('content-type')}\naccess-control-allow-origin: ${r.headers.get('access-control-allow-origin')}\n\n${text.slice(0,1200)}`;
+  }catch(e){
+    out.innerHTML=`<span class="bad">❌ fetch 失败</span>\n${e.name}: ${e.message}\n\n如果控制台显示 CORS policy / Failed to fetch，说明普通PWA直连不可用或被浏览器策略阻止。`;
+  }
+}
+function testJsonp(){
+  const out=document.getElementById('jsonpOut');
+  out.textContent='正在请求...';
+  const cb='__eastmoney_test_cb_'+Date.now();
+  let done=false;
+  const cleanup=(script)=>{
+    try{delete window[cb]}catch(e){}
+    script?.remove();
+  };
+  window[cb]=(data)=>{
+    done=true;
+    out.innerHTML=`<span class="ok">✅ JSONP 成功</span>\ncallback: ${cb}\n\n${JSON.stringify(data,null,2).slice(0,1200)}`;
+    cleanup(script);
+  };
+  const script=document.createElement('script');
+  script.onerror=()=>{
+    if(done)return;
+    out.innerHTML=`<span class="bad">❌ JSONP 失败</span>\nscript 加载错误。`;
+    cleanup(script);
+  };
+  // Eastmoney endpoints commonly accept cb=callbackName. This test verifies it empirically.
+  script.src=base+params(`&cb=${encodeURIComponent(cb)}`);
+  document.body.appendChild(script);
+  setTimeout(()=>{
+    if(!done){
+      out.innerHTML=`<span class="bad">❌ JSONP 超时</span>\n接口未调用回调函数。`;
+      cleanup(script);
+    }
+  },12000);
+}
+</script>
+</body>
+</html>
